@@ -1,0 +1,22 @@
+#ifndef __TYPEDEF_HPP__
+#define __TYPEDEF_HPP__
+
+
+#include "ap_fixed.h"
+#include "ap_int.h"
+#include "hls_stream.h"
+
+#define T 40
+#define N 40
+
+typedef ap_fixed<18, 3> coe_htype;
+// typedef float coe_htype;
+
+typedef struct{
+    coe_htype Hx;
+    coe_htype Hy;
+    coe_htype Mzx;
+    coe_htype Mzy;
+}point;
+
+#endif

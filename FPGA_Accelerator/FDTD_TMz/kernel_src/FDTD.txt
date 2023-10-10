@@ -1,0 +1,212 @@
+#include "typedef.hpp"
+static void update_Hx_loop(coe_htype Hx_new[], point data[], coe_htype C[]){
+#pragma HLS INLINE
+    for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+        if(col == N - 1){
+            Hx_new[col] = C[col] * (data[col].Hx - (0 - data[col].Mzx - data[col].Mzy));
+        }
+        else{
+            Hx_new[col] = C[col] * (data[col].Hx - (data[col+1].Mzx + data[col+1].Mzy - data[col].Mzx - data[col].Mzy));
+        }
+    }
+}
+static void update_Hy_loop(coe_htype Hy_new[], point data[], coe_htype Hy_boundary[], coe_htype C[], int row){
+#pragma HLS INLINE
+    for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+        if(row == N - 1){
+            Hy_new[col] = C[col] * (data[col].Hy + (0 - data[col].Mzx - data[col].Mzy));
+        }
+        else{
+            Hy_new[col] = C[col] * (data[col].Hy + (Hy_boundary[col] - data[col].Mzx - data[col].Mzy));
+        }
+    }
+}
+static void update_Mzy_loop(coe_htype Mzy_new[], point data[], coe_htype Hx[], coe_htype C[], coe_htype Ca[]){
+#pragma HLS INLINE
+    for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+        if(col == 0){
+            Mzy_new[col] = C[col] * data[col].Mzy - Ca[col] * (Hx[col] - 0);
+        }
+        else{
+            Mzy_new[col] = C[col] * data[col].Mzy - Ca[col] * (Hx[col] - Hx[col - 1]);
+        }
+    }
+}
+static void update_Mzx_loop(coe_htype Mzx_new[], point data[], coe_htype Hy[], coe_htype Mzx_boundary[], coe_htype C[], coe_htype Ca[], int row){
+#pragma HLS INLINE
+    for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+        if(row == 0){
+            Mzx_new[col] = C[col] * data[col].Mzx + Ca[col] * (Hy[col] - 0);
+        }
+        else{
+            Mzx_new[col] = C[col] * data[col].Mzx + Ca[col] * (Hy[col] - Mzx_boundary[col]);
+        }
+    }
+}
+void FDTD_Kernel(float source[T], float C[][N], float Ca[][N], float Hx[][N], float Hy[][N], float Mzx[][N], float Mzy[][N], float Mz[T]){
+#pragma HLS INTERFACE m_axi port = source offset = slave bundle = source_in
+#pragma HLS INTERFACE m_axi port = C offset = slave bundle = C_in
+#pragma HLS INTERFACE m_axi port = Ca offset = slave bundle = Ca_in
+#pragma HLS INTERFACE m_axi port = Hx offset = slave bundle = Hx_in
+#pragma HLS INTERFACE m_axi port = Hy offset = slave bundle = Hy_in
+#pragma HLS INTERFACE m_axi port = Mzx offset = slave bundle = Mzx_in
+#pragma HLS INTERFACE m_axi port = Mzy offset = slave bundle = Mzy_in
+#pragma HLS INTERFACE m_axi port = Mz offset = slave bundle = Mz_out
+#pragma HLS INTERFACE s_axilite port = return
+//mem_local to receive data
+    static coe_htype src_val[T];
+    static coe_htype C_local[N][N];
+#pragma HLS BIND_STORAGE variable=C_local impl=bram latency=1
+#pragma HLS ARRAY_PARTITION dim=1 type=complete variable=C_local
+    static coe_htype Ca_local[N][N];
+#pragma HLS BIND_STORAGE variable=Ca_local impl=bram latency=1
+#pragma HLS ARRAY_PARTITION dim=2 type=complete variable=Ca_local
+    static point space[N][N];
+#pragma HLS aggregate variable=space compact=bit
+#pragma HLS BIND_STORAGE variable=space type=ram_2p impl=uram
+#pragma HLS ARRAY_PARTITION variable=space type=complete dim=2
+//read 
+mem_rd_src:
+    for(int t = 0; t < T; t++){
+#pragma HLS PIPELINE 
+        src_val[t] = (coe_htype)source[t];
+    }
+mem_rd_C:
+    for(int row = 0; row < N; row++){
+        for(int col = 0; col < N; col++){
+#pragma HLS PIPELINE
+            C_local[row][col] = (coe_htype)C[row][col];
+        }
+    }
+mem_rd_Ca:
+    for(int row = 0; row < N; row++){
+        for(int col = 0; col < N; col++){
+#pragma HLS PIPELINE 
+            Ca_local[row][col] = (coe_htype)Ca[row][col];
+        }
+    }
+mem_rd_Space:
+    for(int i = 0; i < N; i++){
+        for(int j = 0; j < N; j++){
+#pragma HLS PIPELINE 
+            point temp;
+            temp.Hx = Hx[i][j];
+            temp.Hy = Hy[i][j];
+            temp.Mzy = Mzx[i][j];
+            temp.Mzx = Mzy[i][j];
+            space[i][j] = temp;
+        }
+    }
+//update
+update_loop:
+    coe_htype Hx_new_r0[N];
+#pragma HLS ARRAY_PARTITION variable=Hx_new_r0 type=complete dim=1
+    coe_htype Hx_new_r1[N];
+#pragma HLS ARRAY_PARTITION variable=Hx_new_r1 type=complete dim=1
+    coe_htype Hx_new_r2[N];
+#pragma HLS ARRAY_PARTITION variable=Hx_new_r2 type=complete dim=1
+    coe_htype Hy_new_r0[N];
+#pragma HLS ARRAY_PARTITION variable=Hy_new_r0 type=complete dim=1
+    coe_htype Hy_new_r1[N];
+#pragma HLS ARRAY_PARTITION variable=Hy_new_r1 type=complete dim=1
+    coe_htype Mzy_new_r0[N];
+#pragma HLS ARRAY_PARTITION variable=Mzy_new_r0 type=complete dim=1
+    coe_htype Mzy_new_r1[N];
+#pragma HLS ARRAY_PARTITION variable=Mzy_new_r1 type=complete dim=1
+    coe_htype Mzx_new[N];
+#pragma HLS ARRAY_PARTITION variable=Mzx_new type=complete dim=1
+    point reg0[N];
+#pragma HLS ARRAY_PARTITION variable=reg0 type=complete dim=1
+    point reg1[N];
+#pragma HLS ARRAY_PARTITION variable=reg1 type=complete dim=1
+    point reg2[N];
+#pragma HLS ARRAY_PARTITION variable=reg2 type=complete dim=1
+Time_ite:
+    for(int t = 0; t < T; t++){
+Row_ite:
+        for(int row = 0; row < N+4; row++){
+#pragma HLS PIPELINE
+            if(row > 3){
+Write_row:
+                for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+                    point temp;
+                    temp.Hx = Hx_new_r2[col];
+                    temp.Hy = Hy_new_r1[col];
+                    if ((row == 23) && (col == 19)){
+                        temp.Mzy = Mzy_new_r1[col] + src_val[t];
+                        temp.Mzx = Mzx_new[col] + src_val[t];
+                    }
+                    else{
+                        temp.Mzy = Mzy_new_r1[col];
+                        temp.Mzx = Mzx_new[col];
+                    }
+                    space[row-4][col] = temp;
+                }
+            }
+Mzy_ite:
+            if((row > 2) && (row < N+3)){
+                for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+                    Mzy_new_r1[col] = Mzy_new_r0[col];
+                }
+            }
+Hx_ite:
+            if((row > 1) && (row < N+2)){
+                for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+                    Hx_new_r2[col] = Hx_new_r1[col];
+                    Hx_new_r1[col] = Hx_new_r0[col];
+                }
+            }
+            //update Mzx
+            if((row > 2) && (row < N+3)){
+                update_Mzx_loop(Mzx_new, reg2, Hy_new_r0, Hy_new_r1, C_local[row-3], Ca_local[row-3], row);
+            }
+Hy_ite:
+            if((row > 2) && (row < N+3)){
+                for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+                    Hy_new_r1[col] = Hy_new_r0[col];
+                }
+            }
+            //update Mzy
+            if ((row > 1) && (row < N+2)){
+                update_Mzy_loop(Mzy_new_r0, reg1, Hx_new_r0, C_local[row-2], Ca_local[row-2]);
+            }
+            //update Hy
+            if((row > 1) && (row < N+2)){
+                coe_htype Mz_row_1[N];
+Cal_boundary:
+                for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+                    Mz_row_1[col] = reg0[col].Mzx + reg0[col].Mzy;
+                }
+                update_Hy_loop(Hy_new_r0, reg1, Mz_row_1, C_local[row-2], row);
+            }
+            // update Hx
+            if ((row > 0) && (row < N+1)){
+                update_Hx_loop(Hx_new_r0, reg0, C_local[row-1]);
+            }
+            //shift reg
+Shift_reg:
+            for(int col = 0; col < N; col++){
+#pragma HLS UNROLL
+                reg2[col] = reg1[col];
+                reg1[col] = reg0[col];
+                if(row < N){
+                    reg0[col] = space[row][col];
+                }
+            }
+        }//end row
+mem_wr:
+        point o_temp = space[26][26];
+        Mz[t] = float(o_temp.Mzx + o_temp.Mzy);
+    }//end T
+//write back
+}
+

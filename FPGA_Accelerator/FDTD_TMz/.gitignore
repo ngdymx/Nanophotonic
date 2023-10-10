@@ -1,0 +1,6 @@
+build
+*.log
+.ipcache
+*.json
+.vscode
+aws_image/
